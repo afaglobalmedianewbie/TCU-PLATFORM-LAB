@@ -7,6 +7,10 @@ const { prisma } = require('../modules/db');
 const { requireAuth, requireRole } = require('../modules/auth-middleware');
 const { logAudit, AUDIT_ACTIONS } = require('../modules/audit');
 const { validateBody, createInvoiceSchema, createPlanSchema, updatePlanSchema } = require('../modules/validate');
+const midtrans = require('../modules/midtrans');
+const xendit = require('../modules/xendit');
+const notifier = require('../modules/notifier');
+const { unIsolirUser } = require('../modules/radius-coa');
 
 // GET /api/billing/invoices
 router.get('/invoices', requireAuth, requireRole(['ADMIN', 'NOC']), async (req, res, next) => {
@@ -130,6 +134,135 @@ router.patch('/plans/:id', requireAuth, requireRole(['ADMIN']), validateBody(upd
     res.json(plan);
   } catch (err) {
     next(err);
+  }
+});
+
+// POST /api/billing/invoices/:id/checkout — Generate Payment Gateway Link
+router.post('/invoices/:id/checkout', requireAuth, async (req, res, next) => {
+  try {
+    const invoice = await prisma.invoice.findUnique({
+      where: { id: req.params.id },
+      include: { customer: { include: { user: true } }, plan: true }
+    });
+    if (!invoice) return res.status(404).json({ error: 'Invoice tidak ditemukan', code: 'NOT_FOUND' });
+    if (invoice.status === 'PAID') return res.status(400).json({ error: 'Invoice sudah lunas', code: 'ALREADY_PAID' });
+
+    // Cek gateway aktif dari pengaturan
+    const activeGw = await prisma.systemSetting.findUnique({ where: { key: 'ACTIVE_PAYMENT_GATEWAY' } });
+    const gateway = activeGw ? activeGw.value : 'MIDTRANS';
+
+    let paymentResult = null;
+    if (gateway === 'XENDIT') {
+      paymentResult = await xendit.createXenditInvoice(invoice, invoice.customer);
+      return res.json({ gateway: 'XENDIT', paymentUrl: paymentResult.invoiceUrl, id: paymentResult.id });
+    } else {
+      // Default: Midtrans Snap
+      paymentResult = await midtrans.createSnapTransaction(invoice, invoice.customer);
+      return res.json({ gateway: 'MIDTRANS', token: paymentResult.token, paymentUrl: paymentResult.redirectUrl });
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/billing/webhook/midtrans — Realtime Callback from Midtrans
+router.post('/webhook/midtrans', async (req, res, next) => {
+  try {
+    const { order_id, status_code, gross_amount, signature_key, transaction_status, payment_type } = req.body;
+
+    const midConfig = await midtrans.getMidtransConfig();
+    const isValid = midtrans.verifySignature(order_id, status_code, gross_amount, signature_key, midConfig.serverKey);
+    if (!isValid) {
+      console.warn(`[Webhook-Midtrans] Invalid Signature untuk order_id: ${order_id}`);
+      return res.status(403).json({ error: 'Invalid signature', code: 'FORBIDDEN' });
+    }
+
+    if (['capture', 'settlement'].includes(transaction_status)) {
+      const invoice = await prisma.invoice.findUnique({
+        where: { id: order_id },
+        include: { customer: { include: { user: true } }, plan: true }
+      });
+
+      if (invoice && invoice.status !== 'PAID') {
+        const [payment] = await prisma.$transaction([
+          prisma.payment.create({
+            data: {
+              invoiceId: invoice.id,
+              amountIdr: Math.round(parseFloat(gross_amount)),
+              method: `MIDTRANS_${payment_type ? payment_type.toUpperCase() : 'ONLINE'}`,
+              reference: req.body.transaction_id || order_id
+            }
+          }),
+          prisma.invoice.update({
+            where: { id: invoice.id },
+            data: { status: 'PAID', paidAt: new Date() }
+          })
+        ]);
+
+        console.log(`[Webhook-Midtrans] Invoice #${invoice.id} berhasil dilunasi via ${payment_type}!`);
+
+        // 1. Kirim notifikasi WhatsApp & Telegram
+        await notifier.notifyPaymentSuccess(invoice.customer, invoice, payment);
+
+        // 2. Eksekusi Instant Un-Isolir ke MikroTik CCR via RADIUS CoA (Port 3799)
+        const username = invoice.customer.user ? invoice.customer.user.email : invoice.customerId;
+        await unIsolirUser(username);
+      }
+    }
+
+    res.json({ success: true, message: 'Midtrans webhook processed' });
+  } catch (err) {
+    console.error('[Webhook-Midtrans] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/billing/webhook/xendit — Realtime Callback from Xendit
+router.post('/webhook/xendit', async (req, res, next) => {
+  try {
+    const callbackToken = req.headers['x-callback-token'];
+    const xenditConfig = await xendit.getXenditConfig();
+
+    if (!xendit.verifyXenditCallback(callbackToken, xenditConfig.webhookToken)) {
+      return res.status(403).json({ error: 'Invalid callback token', code: 'FORBIDDEN' });
+    }
+
+    const { external_id, status, paid_amount, payment_method } = req.body;
+    if (status === 'PAID') {
+      const invoice = await prisma.invoice.findUnique({
+        where: { id: external_id },
+        include: { customer: { include: { user: true } }, plan: true }
+      });
+
+      if (invoice && invoice.status !== 'PAID') {
+        const [payment] = await prisma.$transaction([
+          prisma.payment.create({
+            data: {
+              invoiceId: invoice.id,
+              amountIdr: parseInt(paid_amount),
+              method: `XENDIT_${payment_method || 'ONLINE'}`,
+              reference: req.body.id || external_id
+            }
+          }),
+          prisma.invoice.update({
+            where: { id: invoice.id },
+            data: { status: 'PAID', paidAt: new Date() }
+          })
+        ]);
+
+        console.log(`[Webhook-Xendit] Invoice #${invoice.id} berhasil dilunasi via Xendit!`);
+
+        // Notifikasi & un-isolir
+        await notifier.notifyPaymentSuccess(invoice.customer, invoice, payment);
+        const username = invoice.customer.user ? invoice.customer.user.email : invoice.customerId;
+        await unIsolirUser(username);
+      }
+    }
+
+    res.json({ success: true, message: 'Xendit webhook processed' });
+  } catch (err) {
+    console.error('[Webhook-Xendit] Error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 

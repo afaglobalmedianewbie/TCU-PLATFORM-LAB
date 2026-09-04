@@ -128,3 +128,12 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE TRIGGER trg_radcheck_updated_at
   BEFORE UPDATE ON radcheck
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ─── system_settings: konfigurasi dinamis payment & notifikasi ────────────────
+CREATE TABLE IF NOT EXISTS system_settings (
+  key VARCHAR(255) PRIMARY KEY,
+  value TEXT NOT NULL,
+  category VARCHAR(50) NOT NULL DEFAULT 'GENERAL',
+  is_secret BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

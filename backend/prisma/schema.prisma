@@ -203,3 +203,15 @@ model AuditLog {
 
   @@map("audit_logs")
 }
+
+// ─── System & Dynamic Integration Settings ────────────────────────────────────
+
+model SystemSetting {
+  key       String   @id
+  value     String   @db.Text
+  category  String   @default("GENERAL") // PAYMENT, NOTIFICATION, NETWORK, etc.
+  isSecret  Boolean  @default(false)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}

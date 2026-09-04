@@ -13,6 +13,7 @@ const billingRoutes = require('./routes/billing');
 const deviceRoutes = require('./routes/devices');
 const networkRoutes = require('./routes/network');
 const healthRoutes = require('./routes/health');
+const settingsRoutes = require('./routes/settings');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const NODE_ENV = process.env.NODE_ENV || 'production';
@@ -50,6 +51,7 @@ app.use('/api/customers', customerRoutes);
 app.use('/api/billing', billingRoutes);
 app.use('/api/devices', deviceRoutes);
 app.use('/api/network', networkRoutes);
+app.use('/api/settings', settingsRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });

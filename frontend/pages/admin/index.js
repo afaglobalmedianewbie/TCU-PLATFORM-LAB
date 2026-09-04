@@ -9,6 +9,7 @@ const adminMenus = [
   { label: 'Perangkat', href: '/admin/devices', icon: '📡', desc: 'OLT/ONU/CPE/Switch' },
   { label: 'Jaringan', href: '/network', icon: '🌐', desc: 'Sesi RADIUS & statistik' },
   { label: 'Monitoring', href: '/monitoring', icon: '📊', desc: 'Prometheus & Grafana' },
+  { label: 'Integrasi & Webhook', href: '/admin/settings/integrations', icon: '🔌', desc: 'Midtrans, Xendit & Notifikasi' },
   { label: 'Audit Log', href: '/admin/audit', icon: '🔍', desc: 'Riwayat aktivitas sistem' },
 ];
 
