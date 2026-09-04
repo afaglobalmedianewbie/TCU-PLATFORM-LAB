@@ -1,0 +1,138 @@
+﻿version: '3.8'
+
+services:
+  # ─── 1. DATABASE (PostgreSQL 15) ──────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: tcu-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: 
+      POSTGRES_PASSWORD: 
+      POSTGRES_DB: 
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./config/radius-init.sql:/docker-entrypoint-initdb.d/init-radius.sql:ro
+    ports:
+      - 5432:5432
+    networks:
+      - tcu-network
+
+  # ─── 2. CACHE & SESSION (Redis 7) ─────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: tcu-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - 6379:6379
+    networks:
+      - tcu-network
+
+  # ─── 3. BACKEND API & DEVICE ENGINE ───────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: tcu-backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://:@postgres:5432/?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: 
+      MIKROTIK_HOST: 
+      MIKROTIK_PORT: 
+      MIKROTIK_USER: 
+      MIKROTIK_PASS: 
+      OLT_HOST: 
+      OLT_SNMP_COMMUNITY: 
+    ports:
+      - 3000:3000
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - tcu-network
+
+  # ─── 4. FRONTEND COMMAND CENTER (Next.js) ──────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: tcu-frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: 
+      PORT: 3001
+    ports:
+      - 3001:3001
+    depends_on:
+      - backend
+    networks:
+      - tcu-network
+
+  # ─── 5. FREERADIUS AAA (PPPoE Server Engine) ──────────────────────────────
+  freeradius:
+    image: freeradius/freeradius-server:latest
+    container_name: tcu-freeradius
+    restart: unless-stopped
+    ports:
+      - 1812:1812/udp
+      - 1813:1813/udp
+      - 3799:3799/udp
+    depends_on:
+      - postgres
+    networks:
+      - tcu-network
+
+  # ─── 6. TELEMETRY & OBSERVABILITY (Prometheus + Grafana) ───────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: tcu-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - 9090:9090
+    networks:
+      - tcu-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: tcu-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=tcu_grafana_2026
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - 3002:3000
+    depends_on:
+      - prometheus
+    networks:
+      - tcu-network
+
+  # ─── 7. SECURE ZERO TRUST TUNNEL (Cloudflare) ─────────────────────────────
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: tcu-cloudflared
+    restart: unless-stopped
+    command: tunnel run --token 
+    networks:
+      - tcu-network
+
+networks:
+  tcu-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:

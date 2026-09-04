@@ -1,0 +1,205 @@
+// This is your Prisma schema file
+// TCU-PLATFORM-V10 — PostgreSQL 15+
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Authentication ───────────────────────────────────────────────────────────
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  role         UserRole  @default(CUSTOMER)
+  isActive     Boolean   @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  customer  Customer?
+  auditLogs AuditLog[]
+
+  @@map("users")
+}
+
+enum UserRole {
+  ADMIN
+  NOC
+  TECHNICIAN
+  CUSTOMER
+}
+
+// ─── Customer ─────────────────────────────────────────────────────────────────
+
+model Customer {
+  id          String         @id @default(cuid())
+  userId      String         @unique @map("user_id")
+  fullName    String         @map("full_name")
+  phone       String?
+  address     String?
+  status      CustomerStatus @default(ACTIVE)
+  planId      String?        @map("plan_id")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan     Plan?     @relation(fields: [planId], references: [id])
+  invoices Invoice[]
+  devices  Device[]
+
+  @@map("customers")
+}
+
+enum CustomerStatus {
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+}
+
+// ─── Billing / Plan ───────────────────────────────────────────────────────────
+
+model Plan {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  priceIdr    Int      @map("price_idr")
+  speedMbps   Int      @map("speed_mbps")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  customers Customer[]
+  invoices  Invoice[]
+
+  @@map("plans")
+}
+
+model Invoice {
+  id          String        @id @default(cuid())
+  customerId  String        @map("customer_id")
+  planId      String        @map("plan_id")
+  amountIdr   Int           @map("amount_idr")
+  status      InvoiceStatus @default(UNPAID)
+  dueDate     DateTime      @map("due_date")
+  paidAt      DateTime?     @map("paid_at")
+  periodStart DateTime      @map("period_start")
+  periodEnd   DateTime      @map("period_end")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  customer Customer  @relation(fields: [customerId], references: [id])
+  plan     Plan      @relation(fields: [planId], references: [id])
+  payments Payment[]
+
+  @@map("invoices")
+}
+
+enum InvoiceStatus {
+  UNPAID
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+model Payment {
+  id        String   @id @default(cuid())
+  invoiceId String   @map("invoice_id")
+  amountIdr Int      @map("amount_idr")
+  method    String
+  reference String?
+  paidAt    DateTime @default(now()) @map("paid_at")
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
+
+  @@map("payments")
+}
+
+// ─── Network Devices ──────────────────────────────────────────────────────────
+
+model Device {
+  id           String       @id @default(cuid())
+  customerId   String?      @map("customer_id")
+  serialNumber String       @unique @map("serial_number")
+  macAddress   String       @unique @map("mac_address")
+  type         DeviceType
+  model        String?
+  firmwareVer  String?      @map("firmware_ver")
+  ipAddress    String?      @map("ip_address")
+  status       DeviceStatus @default(OFFLINE)
+  lastSeenAt   DateTime?    @map("last_seen_at")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  customer     Customer?    @relation(fields: [customerId], references: [id])
+  diagnostics  DeviceDiagnostic[]
+
+  @@map("devices")
+}
+
+enum DeviceType {
+  ONU
+  OLT
+  CPE
+  SWITCH
+}
+
+enum DeviceStatus {
+  ONLINE
+  OFFLINE
+  DEGRADED
+  PROVISIONING
+}
+
+model DeviceDiagnostic {
+  id           String   @id @default(cuid())
+  deviceId     String   @map("device_id")
+  rxPowerDbm   Float?   @map("rx_power_dbm")
+  txPowerDbm   Float?   @map("tx_power_dbm")
+  uptimeSeconds Int?    @map("uptime_seconds")
+  errorCount   Int?     @default(0) @map("error_count")
+  rawMetrics   Json?    @map("raw_metrics")
+  collectedAt  DateTime @default(now()) @map("collected_at")
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@map("device_diagnostics")
+}
+
+// ─── RADIUS Accounting (mirror dari FreeRADIUS) ───────────────────────────────
+
+model RadiusSession {
+  id             String    @id @default(cuid())
+  username       String
+  nasIpAddress   String    @map("nas_ip_address")
+  framedIp       String?   @map("framed_ip")
+  sessionId      String    @unique @map("session_id")
+  startTime      DateTime  @map("start_time")
+  stopTime       DateTime? @map("stop_time")
+  inputOctets    BigInt    @default(0) @map("input_octets")
+  outputOctets   BigInt    @default(0) @map("output_octets")
+  terminateCause String?   @map("terminate_cause")
+
+  @@map("radius_sessions")
+}
+
+// ─── Audit Log ────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?  @map("user_id")
+  action    String
+  resource  String
+  resourceId String? @map("resource_id")
+  metadata  Json?
+  ipAddress String?  @map("ip_address")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}

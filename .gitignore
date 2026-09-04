@@ -1,0 +1,9 @@
+﻿node_modules/
+.env
+*.log
+.next/
+dist/
+postgres_data/
+redis_data/
+prometheus_data/
+grafana_data/

@@ -1,0 +1,31 @@
+{
+  "name": "tcu-platform-frontend",
+  "version": "1.0.0",
+  "description": "TCU-PLATFORM-V10 Frontend — Next.js SSR + Tailwind CSS",
+  "private": true,
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "^14.2.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "next-auth": "^4.24.7",
+    "axios": "^1.7.2",
+    "clsx": "^2.1.1"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.3",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38",
+    "@types/node": "^20.12.7",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "^14.2.3"
+  }
+}
